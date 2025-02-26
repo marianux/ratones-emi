@@ -142,7 +142,6 @@ def filtro_peine_DCyArmonicas( xx, DD = 16, UU = 2, MA_stages = 2 ):
     xx_aux = np.roll(xx, int((DD-1)/2*MA_stages*UU), axis=0 )
     yy = xx_aux - yy
     return( yy )
-       
 
 def blackman_tukey(x,  M = None):    
     
@@ -174,7 +173,7 @@ def blackman_tukey(x,  M = None):
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-
+from aip_detector import aip_detector
 
 # configuración del filtro de Lyons
 dd = 64
@@ -188,7 +187,7 @@ demora_rl = int((dd-1)/2*ma_st*uu)
 # los 50 Hz.
 # upsampling
 uu_signal = 2
-fs = 250 * uu_signal # 250 x 2
+fs = 250 # Hz (250 x uu_signal)
 
 
 carpeta_ecg = '/home/mariano/Descargas/ratones emi/Datos Incógnita/solo_ecg'
@@ -200,34 +199,40 @@ for archivo in archivos_ecg:
     
     filepath = os.path.join(carpeta_ecg, archivo)
     
-    # Leer los datos binarios y reorganizar para 12 derivaciones
-    with open(filepath, 'rb') as f:
-        ecg_data = np.fromfile(f, dtype=np.int16, offset=4096).astype(np.float64)
-
-    
-    ecg_chan = 13
-    
-    num_samples = len(ecg_data) // ecg_chan
-    ecg_channels = ecg_data.reshape((-1, ecg_chan))
-    ecg_channels = ecg_channels[:,0:3]
-
-    if uu_signal > 1:
-        ecg_channels = sig.resample_poly(ecg_channels, up=uu_signal, down=1, axis=0)
-    
-    cant_muestras = ecg_channels.shape[0]
-    
-    block_s = cant_muestras
-    
-    ecg_channels_filtrado = filtro_peine_DCyArmonicas( ecg_channels, DD = dd, UU = uu, MA_stages = ma_st )
-
-    
-    archivo_filt = os.path.splitext(archivo)[0] + "_filt.npy"
+    archivo_filt = os.path.splitext(archivo)[0] + "_filt"
     filepath_filt = os.path.join(carpeta_ecg, archivo_filt)
-    
-    # Guardar la matriz en formato binario de numpy
-    np.save(filepath_filt, ecg_data)
 
-    print(f'Guardando {archivo_filt}')
+    if ~os.path.exists(filepath_filt + '.npz'):
+        
+        # Leer los datos binarios y reorganizar para 12 derivaciones
+        with open(filepath, 'rb') as f:
+            ecg_data = np.fromfile(f, dtype=np.int16, offset=4096).astype(np.float64)
+    
+        
+        ecg_chan = 13
+        
+        num_samples = len(ecg_data) // ecg_chan
+        ecg_channels = ecg_data.reshape((-1, ecg_chan))
+        ecg_channels = ecg_channels[:,0:3]
+    
+        if uu_signal > 1:
+            ecg_channels = sig.resample_poly(ecg_channels, up=uu_signal, down=1, axis=0)
+        
+        cant_muestras = ecg_channels.shape[0]
+        
+        block_s = cant_muestras
+        
+        ecg_channels_filtrado = filtro_peine_DCyArmonicas( ecg_channels, DD = dd, UU = uu, MA_stages = ma_st )
+
+        if uu_signal > 1:
+            ecg_channels_filtrado = sig.resample_poly(ecg_channels_filtrado, up=1, down=uu_signal, axis=0)
+        
+        # Guardar la matriz en formato binario de numpy
+        np.savez(filepath_filt, ECG = ecg_channels_filtrado)
+    
+        print(f'Guardando {archivo_filt}')
+    
+    
     
     # Visualización debug.
     #
@@ -302,4 +307,58 @@ for archivo in archivos_ecg:
     # # plt.show()
     
     # pass
+
+#%% detección de QRS
+
+    archivo_filt_qrs = archivo_filt + "_qrs"
+
+    filepath_filt_qrs = os.path.join(carpeta_ecg, archivo_filt_qrs)
+
+    if ~os.path.exists(filepath_filt_qrs + '.npz'):
+    
+        npz_file = np.load(filepath_filt + '.npz')
+        
+        ecg_channels_filtrado = npz_file['ECG']
+        
+        ECG_header = { 'freq' : fs,
+                      'nsamp' : ecg_channels_filtrado.shape[0],
+                      'nsig' : ecg_channels_filtrado.shape[1],
+                      'recname' : os.path.splitext(archivo)[0],
+                      'desc' : ['I', 'II', 'III']
+                      }
+        
+        # config para ratones provisoria
+        my_pattern = 0.
+        
+        params_in = {
+            "arb_pattern" : my_pattern,  # Patrón arbitrario a buscar
+            "trgt_width" : 0.04,  # Ancho de QRS en segundos
+            "lp_size" : np.round(0.015 * 250),  # Ancho del filtro pasabajos luego del filtro adaptado. Default: 0. ó 1.2*trgt_width
+            "trgt_min_pattern_separation" : 0.06,  # Separación mínima entre patrones en segundos
+            "trgt_max_pattern_separation" : 0.2,  # Separación máxima entre patrones en segundos
+            "stable_RR_time_win" : 2,  # Ventana de tiempo para ritmo estable en segundos
+            "final_build_time_win" : 20,  # Ventana de tiempo para construir detección final en segundos
+            "powerline_interference" : np.nan,  # Interferencia de línea de potencia (Hz)
+            "max_patterns_found" : 3,  # Número máximo de patrones detectados
+            "sig_idx" : np.arange(ECG_header['nsig'])  # Índices de señales
+        }
+            
+        QRS_detections = aip_detector(ecg_channels_filtrado, ECG_header, payload_in = params_in)
+    
+        plt.figure(1)
+        plt.plot(ecg_channels_filtrado)
+        aux_qrs = QRS_detections['aip_guess_I']['time']
+        plt.plot(aux_qrs, ecg_channels_filtrado[aux_qrs, 0], 'bd', label="QRS I")
+        aux_qrs = QRS_detections['aip_guess_II']['time']
+        plt.plot(aux_qrs, ecg_channels_filtrado[aux_qrs, 1], 'gd', label="QRS II")
+        aux_qrs = QRS_detections['aip_guess_III']['time']
+        plt.plot(aux_qrs, ecg_channels_filtrado[aux_qrs, 2], 'rd', label="QRS III")
+        plt.legend()
+        plt.grid()
+        plt.show()
+    
+        pass
+    
+        # Guardar la matriz en formato binario de numpy
+        np.savez(filepath_filt_qrs, ECG = ecg_channels_filtrado, QRS_det = QRS_detections)
 
