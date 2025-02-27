@@ -194,19 +194,33 @@ fs = 250 # Hz (250 x uu_signal)
 
 carpeta_ecg = '/home/mariano/Descargas/ratones emi/Datos Incógnita/solo_ecg'
 # Obtener todos los archivos con extensión .ecg en el directorio actual
-archivos_ecg = [f for f in os.listdir(carpeta_ecg) if f.endswith('.ecg')]
+archivos_ecg = [f for f in os.listdir(carpeta_ecg) if f.endswith('_filt_qrs.npz')]
 
 # Procesar cada archivo con mi_funcion
 for archivo in archivos_ecg:
     
+    archivo = archivo[:-13]
     filepath = os.path.join(carpeta_ecg, archivo)
+
+    print(f'Procesando {archivo}')
     
 #%% conversión de formato y filtrado
     
     archivo_filt = os.path.splitext(archivo)[0] + "_filt"
     filepath_filt = os.path.join(carpeta_ecg, archivo_filt)
 
-    if not os.path.exists(filepath_filt + '.npz'):
+    archivo_filt_qrs = archivo_filt + "_qrs"
+    filepath_filt_qrs = os.path.join(carpeta_ecg, archivo_filt_qrs)
+
+    archivo_packs = archivo_filt_qrs + "_packs"
+    filepath_packs = os.path.join(carpeta_ecg, archivo_packs)
+
+    bYaProcesado = np.any( [os.path.exists(filepath_filt + '.npz'), 
+                            os.path.exists(filepath_filt_qrs + '.npz'), 
+                            os.path.exists(filepath_packs + '.npz'), 
+                            ])
+    
+    if not bYaProcesado:
         
         # Leer los datos binarios y reorganizar para 12 derivaciones
         with open(filepath, 'rb') as f:
@@ -234,7 +248,6 @@ for archivo in archivos_ecg:
         # Guardar la matriz en formato binario de numpy
         np.savez(filepath_filt, ECG = ecg_channels_filtrado)
     
-        print(f'Guardando {archivo_filt}')
     
     
     
@@ -318,7 +331,11 @@ for archivo in archivos_ecg:
 
     filepath_filt_qrs = os.path.join(carpeta_ecg, archivo_filt_qrs)
 
-    if not os.path.exists(filepath_filt_qrs + '.npz'):
+    bYaProcesado = np.any( [ os.path.exists(filepath_filt_qrs + '.npz'), 
+                             os.path.exists(filepath_packs + '.npz'), 
+                            ])
+    
+    if not bYaProcesado:
     
         npz_file = np.load(filepath_filt + '.npz')
         
@@ -371,7 +388,10 @@ for archivo in archivos_ecg:
 
     filepath_packs = os.path.join(carpeta_ecg, archivo_packs)
 
-    if not os.path.exists(filepath_packs + '.npz'):
+    bYaProcesado = np.any( [ os.path.exists(filepath_packs + '.npz'), 
+                            ])
+    
+    if not bYaProcesado:
     
         npz_file = np.load(filepath_filt_qrs + '.npz', allow_pickle=True)
 
@@ -382,7 +402,9 @@ for archivo in archivos_ecg:
         QRS_pack = {'AnnNames': QRS_det['AnnNames']}
         QRS_median = {'AnnNames': QRS_det['AnnNames']}
         
-       for ii, this_lead in enumerate(QRS_det['AnnNames']):
+        time_ref =  np.arange(-0.05, stop=0.08, step = 1/250)
+        
+        for ii, this_lead in enumerate(QRS_det['AnnNames']):
             
             rpeaks = QRS_det[this_lead]['time']
     
@@ -398,7 +420,6 @@ for archivo in archivos_ecg:
             
             QRS_median[this_lead] = this_heartbeat_median
             
-            time_ref =  np.arange(-0.05, stop=0.08, step = 1/250)
             
             # plt.close(ii)
             # plt.figure(ii)
@@ -422,3 +443,39 @@ for archivo in archivos_ecg:
                  allow_pickle=True)
 
         pass
+
+#%%
+
+    npz_file = np.load(filepath_packs + '.npz', allow_pickle=True)
+
+    ecg_clean = npz_file['ECG']
+
+    QRS_det = npz_file['QRS_det'].item()
+    
+    QRS_median = npz_file['QRS_median'].item()
+    
+    QRS_pack = npz_file['QRS_pack'].item()
+    
+    QRS_det = npz_file['QRS_det'].item()
+
+    time_ref =  np.arange(-0.05, stop=0.08, step = 1/250)
+    
+    for ii, this_lead in enumerate(QRS_det['AnnNames']):
+        
+        this_QRS_pack = QRS_pack[this_lead]
+        
+        this_heartbeat_median = QRS_median[this_lead]
+        
+        plt.figure(ii)
+        plt.clf()
+        plt.plot(time_ref, this_QRS_pack, color="gray", linewidth=0.5, alpha=0.5)
+        
+        # Graficar la señal promedio en rojo grueso
+        plt.plot(time_ref, this_heartbeat_median, color="red", linewidth=2, label="Heartbeat Median")
+        
+        plt.ylim((-50, 60))
+        plt.legend()
+        plt.title(this_lead)
+
+    plt.show()
+    pass
