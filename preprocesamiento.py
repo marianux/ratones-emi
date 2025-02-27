@@ -175,6 +175,8 @@ import matplotlib.pyplot as plt
 import os
 from aip_detector import aip_detector
 
+import neurokit2 as nk
+
 # configuración del filtro de Lyons
 dd = 64
 uu = 10
@@ -199,10 +201,12 @@ for archivo in archivos_ecg:
     
     filepath = os.path.join(carpeta_ecg, archivo)
     
+#%% conversión de formato y filtrado
+    
     archivo_filt = os.path.splitext(archivo)[0] + "_filt"
     filepath_filt = os.path.join(carpeta_ecg, archivo_filt)
 
-    if ~os.path.exists(filepath_filt + '.npz'):
+    if not os.path.exists(filepath_filt + '.npz'):
         
         # Leer los datos binarios y reorganizar para 12 derivaciones
         with open(filepath, 'rb') as f:
@@ -314,7 +318,7 @@ for archivo in archivos_ecg:
 
     filepath_filt_qrs = os.path.join(carpeta_ecg, archivo_filt_qrs)
 
-    if ~os.path.exists(filepath_filt_qrs + '.npz'):
+    if not os.path.exists(filepath_filt_qrs + '.npz'):
     
         npz_file = np.load(filepath_filt + '.npz')
         
@@ -345,20 +349,76 @@ for archivo in archivos_ecg:
             
         QRS_detections = aip_detector(ecg_channels_filtrado, ECG_header, payload_in = params_in)
     
-        plt.figure(1)
-        plt.plot(ecg_channels_filtrado)
-        aux_qrs = QRS_detections['aip_guess_I']['time']
-        plt.plot(aux_qrs, ecg_channels_filtrado[aux_qrs, 0], 'bd', label="QRS I")
-        aux_qrs = QRS_detections['aip_guess_II']['time']
-        plt.plot(aux_qrs, ecg_channels_filtrado[aux_qrs, 1], 'gd', label="QRS II")
-        aux_qrs = QRS_detections['aip_guess_III']['time']
-        plt.plot(aux_qrs, ecg_channels_filtrado[aux_qrs, 2], 'rd', label="QRS III")
-        plt.legend()
-        plt.grid()
-        plt.show()
-    
-        pass
+        # plt.figure(1)
+        # plt.plot(ecg_channels_filtrado)
+        # aux_qrs = QRS_detections['aip_guess_I']['time']
+        # plt.plot(aux_qrs, ecg_channels_filtrado[aux_qrs, 0], 'bd', label="QRS I")
+        # aux_qrs = QRS_detections['aip_guess_II']['time']
+        # plt.plot(aux_qrs, ecg_channels_filtrado[aux_qrs, 1], 'gd', label="QRS II")
+        # aux_qrs = QRS_detections['aip_guess_III']['time']
+        # plt.plot(aux_qrs, ecg_channels_filtrado[aux_qrs, 2], 'rd', label="QRS III")
+        # plt.legend()
+        # plt.grid()
+        # plt.show()
     
         # Guardar la matriz en formato binario de numpy
-        np.savez(filepath_filt_qrs, ECG = ecg_channels_filtrado, QRS_det = QRS_detections)
+        np.savez(filepath_filt_qrs, ECG = ecg_channels_filtrado, QRS_det = QRS_detections, allow_pickle=True)
 
+#%% QRS promedios
+
+
+    archivo_packs = archivo_filt_qrs + "_packs"
+
+    filepath_packs = os.path.join(carpeta_ecg, archivo_packs)
+
+    if not os.path.exists(filepath_packs + '.npz'):
+    
+        npz_file = np.load(filepath_filt_qrs + '.npz', allow_pickle=True)
+
+        ecg_clean = npz_file['ECG']
+
+        QRS_det = npz_file['QRS_det'].item()
+        
+        QRS_pack = {'AnnNames': QRS_det['AnnNames']}
+        QRS_median = {'AnnNames': QRS_det['AnnNames']}
+        
+       for ii, this_lead in enumerate(QRS_det['AnnNames']):
+            
+            rpeaks = QRS_det[this_lead]['time']
+    
+            epochs = nk.epochs_create(ecg_clean[:,ii], events=rpeaks, epochs_start=-0.05, epochs_end=0.08, sampling_rate=250)
+
+            this_QRS_pack = nk.epochs_to_array(epochs)
+            
+            this_QRS_pack = this_QRS_pack - np.median(this_QRS_pack,axis = 0)
+            
+            QRS_pack[this_lead] = this_QRS_pack
+            
+            this_heartbeat_median = np.median(this_QRS_pack,axis = 1)
+            
+            QRS_median[this_lead] = this_heartbeat_median
+            
+            time_ref =  np.arange(-0.05, stop=0.08, step = 1/250)
+            
+            # plt.close(ii)
+            # plt.figure(ii)
+            # plt.clf()
+            # plt.plot(time_ref, this_QRS_pack, color="gray", linewidth=0.5, alpha=0.5)
+            
+            # # Graficar la señal promedio en rojo grueso
+            # plt.plot(time_ref, this_heartbeat_median, color="red", linewidth=2, label="Heartbeat Median")
+            
+            # plt.legend()
+            # plt.title(this_lead)
+            # plt.show()
+            
+
+        # Guardar la matriz en formato binario de numpy
+        np.savez(filepath_packs, 
+                 ECG = ecg_clean, 
+                 QRS_det = QRS_det, 
+                 QRS_median = QRS_median, 
+                 QRS_pack = QRS_pack, 
+                 allow_pickle=True)
+
+        pass
